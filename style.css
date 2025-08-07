@@ -40,6 +40,11 @@ body {
     box-sizing: border-box;
 }
 
+#popup-content {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
 #popup-content button {
     margin-top: 10px;
 }

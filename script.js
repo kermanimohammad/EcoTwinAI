@@ -44,7 +44,8 @@ function addGeoJsonToMap(data) {
     } else {
         map.addSource('geojson-data', {
             type: 'geojson',
-            data: data
+            data: data,
+            promoteId: 'ID' // Use the 'ID' property from the GeoJSON as the feature id
         });
     }
 
@@ -60,12 +61,12 @@ function addGeoJsonToMap(data) {
             'fill-extrusion-color': [
                 'interpolate',
                 ['linear'],
-                ['get', 'energy'],
-                0, 'green',
-                50, 'yellow',
-                100, 'red'
+                ['get', 'TotalEnergy'],
+                50, 'green',
+                100, 'yellow',
+                150, 'red'
             ],
-            'fill-extrusion-height': ['get', 'height'],
+            'fill-extrusion-height': ['get', 'Height'],
             'fill-extrusion-opacity': 0.8,
             'fill-extrusion-base': 0
         }
@@ -104,9 +105,7 @@ let selectedFeatureId = null;
 
 map.on('click', 'geojson-layer', (e) => {
     const feature = e.features[0];
-    // Note: GeoJSON features are not guaranteed to have an 'id'.
-    // If they do, it should be unique for this to work reliably.
-    selectedFeatureId = feature.id;
+    selectedFeatureId = feature.id; // This will be the 'ID' property from the GeoJSON
 
     const properties = feature.properties;
 
@@ -116,9 +115,10 @@ map.on('click', 'geojson-layer', (e) => {
             <table id="properties-table">
     `;
     for (const key in properties) {
+        const isReadOnly = key === 'ID';
         html += `<tr>
-                    <td><input type="text" class="key-input" value="${key}"></td>
-                    <td><input type="text" class="value-input" value="${properties[key]}"></td>
+                    <td><input type="text" class="key-input" value="${key}" ${isReadOnly ? 'readonly' : ''}></td>
+                    <td><input type="text" class="value-input" value="${properties[key]}" ${isReadOnly ? 'readonly' : ''}></td>
                  </tr>`;
     }
     html += `
@@ -161,24 +161,13 @@ map.on('click', 'geojson-layer', (e) => {
             const source = map.getSource('geojson-data');
             const data = JSON.parse(JSON.stringify(source._data));
 
-            let featureToUpdate;
-            if (selectedFeatureId !== undefined) {
-                featureToUpdate = data.features.find(f => f.id === selectedFeatureId);
-            }
-
-            if (!featureToUpdate) {
-                const clickedFeature = e.features[0];
-                featureToUpdate = data.features.find(f =>
-                    JSON.stringify(f.geometry) === JSON.stringify(clickedFeature.geometry) &&
-                    JSON.stringify(f.properties) === JSON.stringify(clickedFeature.properties)
-                );
-            }
+            const featureToUpdate = data.features.find(f => f.properties.ID === selectedFeatureId);
 
             if (featureToUpdate) {
                 featureToUpdate.properties = newProperties;
                 source.setData(data);
             } else {
-                alert("Could not find the feature to update. For reliable editing, please ensure features have unique IDs.");
+                alert("Could not find the feature to update. This should not happen if features have a unique 'ID' property.");
             }
 
             popup.remove();
