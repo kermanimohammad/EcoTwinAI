@@ -195,3 +195,164 @@ map.on('mouseenter', 'geojson-layer', () => {
 map.on('mouseleave', 'geojson-layer', () => {
     map.getCanvas().style.cursor = '';
 });
+
+// --- Tree Creator ---
+
+let currentTreeMode = null; // 'single', 'multi', 'delete'
+let treeData = {
+    type: 'FeatureCollection',
+    features: []
+};
+let treeIdCounter = 0;
+
+const treeModeSingleBtn = document.getElementById('tree-mode-single');
+const treeModeMultiBtn = document.getElementById('tree-mode-multi');
+const treeModeDeleteBtn = document.getElementById('tree-mode-delete');
+const treeCreatorBtns = [treeModeSingleBtn, treeModeMultiBtn, treeModeDeleteBtn];
+
+function setTreeMode(mode) {
+    // If the same mode is clicked again, disable it.
+    if (currentTreeMode === mode) {
+        currentTreeMode = null;
+    } else {
+        currentTreeMode = mode;
+    }
+
+    // Update button styles
+    treeCreatorBtns.forEach(btn => {
+        if (btn.id === `tree-mode-${currentTreeMode}`) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    // Change cursor based on mode
+    if (currentTreeMode) {
+        map.getCanvas().style.cursor = 'crosshair';
+    } else {
+        map.getCanvas().style.cursor = '';
+    }
+}
+
+treeModeSingleBtn.addEventListener('click', () => setTreeMode('single'));
+treeModeMultiBtn.addEventListener('click', () => setTreeMode('multi'));
+treeModeDeleteBtn.addEventListener('click', () => setTreeMode('delete'));
+
+map.on('load', () => {
+    map.addSource('trees-source', {
+        type: 'geojson',
+        data: treeData
+    });
+
+    map.addLayer({
+        id: 'trees-layer',
+        type: 'circle',
+        source: 'trees-source',
+        paint: {
+            'circle-radius': 8,
+            'circle-color': '#008000',
+            'circle-stroke-width': 1,
+            'circle-stroke-color': '#004d00'
+        }
+    });
+});
+
+function placeTree(lngLat) {
+    const newTree = {
+        type: 'Feature',
+        geometry: {
+            type: 'Point',
+            coordinates: [lngLat.lng, lngLat.lat]
+        },
+        properties: {
+            id: `tree-${treeIdCounter++}`
+        }
+    };
+    treeData.features.push(newTree);
+    map.getSource('trees-source').setData(treeData);
+    return lngLat;
+}
+
+function deleteTreesAtPoint(point) {
+    const features = map.queryRenderedFeatures(point, { layers: ['trees-layer'] });
+    if (!features.length) return;
+
+    const deletedTreeIds = features.map(f => f.properties.id);
+
+    const initialFeatureCount = treeData.features.length;
+    treeData.features = treeData.features.filter(f => !deletedTreeIds.includes(f.properties.id));
+
+    // Only update the source if something was actually deleted
+    if (treeData.features.length < initialFeatureCount) {
+        map.getSource('trees-source').setData(treeData);
+    }
+}
+
+map.on('click', (e) => {
+    // This listener handles single-click actions for tree modes
+    if (currentTreeMode === 'single') {
+        placeTree(e.lngLat);
+        setTreeMode(null); // Disable single-add mode after one click
+    } else if (currentTreeMode === 'delete') {
+        deleteTreesAtPoint(e.point);
+    }
+
+    // Prevent click from propagating to other layers when in a tree mode
+    if (currentTreeMode) {
+        e.preventDefault();
+    }
+});
+
+// --- Multi-Tree and Drag-to-Delete Logic ---
+let isDragging = false;
+let lastTreePosition = null;
+
+function throttle(func, limit) {
+    let inThrottle;
+    return function() {
+        const args = arguments;
+        const context = this;
+        if (!inThrottle) {
+            func.apply(context, args);
+            inThrottle = true;
+            setTimeout(() => inThrottle = false, limit);
+        }
+    }
+}
+
+map.on('mousedown', (e) => {
+    if (currentTreeMode === 'multi') {
+        isDragging = true;
+        lastTreePosition = placeTree(e.lngLat);
+    } else if (currentTreeMode === 'delete') {
+        isDragging = true;
+        // Also delete on mousedown in case it's a single click not a drag
+        deleteTreesAtPoint(e.point);
+    }
+});
+
+map.on('mousemove', throttle((e) => {
+    if (!isDragging) return;
+
+    if (currentTreeMode === 'multi') {
+        const distance = turf.distance(
+            turf.point([lastTreePosition.lng, lastTreePosition.lat]),
+            turf.point([e.lngLat.lng, e.lngLat.lat]),
+            { units: 'meters' }
+        );
+        const minDistance = document.getElementById('tree-distance').value;
+        if (distance > minDistance) {
+            lastTreePosition = placeTree(e.lngLat);
+        }
+    } else if (currentTreeMode === 'delete') {
+        deleteTreesAtPoint(e.point);
+    }
+}, 100)); // Throttle to 100ms
+
+map.on('mouseup', () => {
+    if (isDragging) {
+        isDragging = false;
+        lastTreePosition = null;
+    }
+});
