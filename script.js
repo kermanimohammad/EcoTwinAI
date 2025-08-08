@@ -1,6 +1,6 @@
 // IMPORTANT: You need to replace 'YOUR_MAPBOX_ACCESS_TOKEN' with your own Mapbox access token.
 // You can get a token from https://account.mapbox.com/
-mapboxgl.accessToken = 'YOUR_MAPBOX_ACCESS_TOKEN';
+mapboxgl.accessToken = 'pk.eyJ1Ijoia2VybWFuaSIsImEiOiJjajF3a2p5bWQwMDAwMnFwbWFpcjQzZW52In0.aFYLXgdRHVofYKKd6JlFdw';
 
 const map = new mapboxgl.Map({
     container: 'map', // container ID
@@ -44,7 +44,8 @@ function addGeoJsonToMap(data) {
     } else {
         map.addSource('geojson-data', {
             type: 'geojson',
-            data: data
+            data: data,
+            promoteId: 'ID' // Use the 'ID' property from the GeoJSON as the feature id
         });
     }
 
@@ -60,12 +61,12 @@ function addGeoJsonToMap(data) {
             'fill-extrusion-color': [
                 'interpolate',
                 ['linear'],
-                ['get', 'energy'],
-                0, 'green',
-                50, 'yellow',
-                100, 'red'
+                ['get', 'TotalEnergy'],
+                50, 'green',
+                100, 'yellow',
+                150, 'red'
             ],
-            'fill-extrusion-height': ['get', 'height'],
+            'fill-extrusion-height': ['get', 'Height'],
             'fill-extrusion-opacity': 0.8,
             'fill-extrusion-base': 0
         }
@@ -104,25 +105,27 @@ let selectedFeatureId = null;
 
 map.on('click', 'geojson-layer', (e) => {
     const feature = e.features[0];
-    // Note: GeoJSON features are not guaranteed to have an 'id'.
-    // If they do, it should be unique for this to work reliably.
-    selectedFeatureId = feature.id;
+    selectedFeatureId = feature.id; // This will be the 'ID' property from the GeoJSON
 
     const properties = feature.properties;
 
-    let html = `
+    const popupContent = document.createElement('div');
+
+    let tableHTML = '<table id="properties-table">';
+    for (const key in properties) {
+        const isReadOnly = key === 'ID';
+        tableHTML += `<tr>
+                        <td><input type="text" class="key-input" value="${key}" ${isReadOnly ? 'readonly' : ''}></td>
+                        <td><input type="text" class="value-input" value="${properties[key]}" ${isReadOnly ? 'readonly' : ''}></td>
+                        <td>${!isReadOnly ? '<button class="remove-btn">X</button>' : ''}</td>
+                     </tr>`;
+    }
+    tableHTML += '</table>';
+
+    popupContent.innerHTML = `
         <div><strong>Building Properties</strong></div>
         <div id="popup-content">
-            <table id="properties-table">
-    `;
-    for (const key in properties) {
-        html += `<tr>
-                    <td><input type="text" class="key-input" value="${key}"></td>
-                    <td><input type="text" class="value-input" value="${properties[key]}"></td>
-                 </tr>`;
-    }
-    html += `
-            </table>
+            ${tableHTML}
             <button id="add-row">Add Row</button>
             <button id="save-properties">Save</button>
         </div>
@@ -130,59 +133,56 @@ map.on('click', 'geojson-layer', (e) => {
 
     const popup = new mapboxgl.Popup()
         .setLngLat(e.lngLat)
-        .setHTML(html)
+        .setDOMContent(popupContent)
         .addTo(map);
 
-    popup.on('open', () => {
-        document.getElementById('add-row').addEventListener('click', () => {
-            const table = document.getElementById('properties-table');
-            const newRow = table.insertRow();
-            newRow.innerHTML = `
-                <td><input type="text" placeholder="key" class="key-input"></td>
-                <td><input type="text" placeholder="value" class="value-input"></td>
-            `;
-        });
+    const addRowBtn = popupContent.querySelector('#add-row');
+    const saveBtn = popupContent.querySelector('#save-properties');
+    const propertiesTable = popupContent.querySelector('#properties-table');
 
-        document.getElementById('save-properties').addEventListener('click', () => {
-            const table = document.getElementById('properties-table');
-            const newProperties = {};
-            for (const row of table.rows) {
-                const keyInput = row.cells[0].querySelector('.key-input');
-                const valueInput = row.cells[1].querySelector('.value-input');
-                if (keyInput && valueInput) {
-                    const key = keyInput.value;
-                    const value = valueInput.value;
-                    if (key) {
-                        newProperties[key] = isNaN(Number(value)) || value === '' ? value : Number(value);
-                    }
+    propertiesTable.addEventListener('click', (event) => {
+        if (event.target.classList.contains('remove-btn')) {
+            const row = event.target.closest('tr');
+            row.remove();
+        }
+    });
+
+    addRowBtn.addEventListener('click', () => {
+        const newRow = propertiesTable.insertRow();
+        newRow.innerHTML = `
+            <td><input type="text" placeholder="key" class="key-input"></td>
+            <td><input type="text" placeholder="value" class="value-input"></td>
+            <td><button class="remove-btn">X</button></td>
+        `;
+    });
+
+    saveBtn.addEventListener('click', () => {
+        const newProperties = {};
+        for (const row of propertiesTable.rows) {
+            const keyInput = row.cells[0].querySelector('.key-input');
+            const valueInput = row.cells[1].querySelector('.value-input');
+            if (keyInput && valueInput) {
+                const key = keyInput.value;
+                const value = valueInput.value;
+                if (key) {
+                    newProperties[key] = isNaN(Number(value)) || value === '' ? value : Number(value);
                 }
             }
+        }
 
-            const source = map.getSource('geojson-data');
-            const data = JSON.parse(JSON.stringify(source._data));
+        const source = map.getSource('geojson-data');
+        const data = JSON.parse(JSON.stringify(source._data));
 
-            let featureToUpdate;
-            if (selectedFeatureId !== undefined) {
-                featureToUpdate = data.features.find(f => f.id === selectedFeatureId);
-            }
+        const featureToUpdate = data.features.find(f => f.properties.ID === selectedFeatureId);
 
-            if (!featureToUpdate) {
-                const clickedFeature = e.features[0];
-                featureToUpdate = data.features.find(f =>
-                    JSON.stringify(f.geometry) === JSON.stringify(clickedFeature.geometry) &&
-                    JSON.stringify(f.properties) === JSON.stringify(clickedFeature.properties)
-                );
-            }
+        if (featureToUpdate) {
+            featureToUpdate.properties = newProperties;
+            source.setData(data);
+        } else {
+            alert("Could not find the feature to update. This should not happen if features have a unique 'ID' property.");
+        }
 
-            if (featureToUpdate) {
-                featureToUpdate.properties = newProperties;
-                source.setData(data);
-            } else {
-                alert("Could not find the feature to update. For reliable editing, please ensure features have unique IDs.");
-            }
-
-            popup.remove();
-        });
+        popup.remove();
     });
 });
 
@@ -194,4 +194,167 @@ map.on('mouseenter', 'geojson-layer', () => {
 // Change it back to a pointer when it leaves.
 map.on('mouseleave', 'geojson-layer', () => {
     map.getCanvas().style.cursor = '';
+});
+
+// --- Tree Creator ---
+
+let currentTreeMode = null; // 'single', 'multi', 'delete'
+let treeData = {
+    type: 'FeatureCollection',
+    features: []
+};
+let treeIdCounter = 0;
+
+const treeModeSingleBtn = document.getElementById('tree-mode-single');
+const treeModeMultiBtn = document.getElementById('tree-mode-multi');
+const treeModeDeleteBtn = document.getElementById('tree-mode-delete');
+const treeCreatorBtns = [treeModeSingleBtn, treeModeMultiBtn, treeModeDeleteBtn];
+
+function setTreeMode(mode) {
+    // If the same mode is clicked again, disable it.
+    if (currentTreeMode === mode) {
+        currentTreeMode = null;
+    } else {
+        currentTreeMode = mode;
+    }
+
+    // Update button styles
+    treeCreatorBtns.forEach(btn => {
+        if (btn.id === `tree-mode-${currentTreeMode}`) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    // Change cursor and map panning based on mode
+    if (currentTreeMode) {
+        map.getCanvas().style.cursor = 'crosshair';
+        map.dragPan.disable();
+    } else {
+        map.getCanvas().style.cursor = '';
+        map.dragPan.enable();
+    }
+}
+
+treeModeSingleBtn.addEventListener('click', () => setTreeMode('single'));
+treeModeMultiBtn.addEventListener('click', () => setTreeMode('multi'));
+treeModeDeleteBtn.addEventListener('click', () => setTreeMode('delete'));
+
+map.on('load', () => {
+    map.addSource('trees-source', {
+        type: 'geojson',
+        data: treeData
+    });
+
+    map.addLayer({
+        id: 'trees-layer',
+        type: 'circle',
+        source: 'trees-source',
+        paint: {
+            'circle-radius': 8,
+            'circle-color': '#008000',
+            'circle-stroke-width': 1,
+            'circle-stroke-color': '#004d00'
+        }
+    });
+});
+
+function placeTree(lngLat) {
+    const newTree = {
+        type: 'Feature',
+        geometry: {
+            type: 'Point',
+            coordinates: [lngLat.lng, lngLat.lat]
+        },
+        properties: {
+            id: `tree-${treeIdCounter++}`
+        }
+    };
+    treeData.features.push(newTree);
+    map.getSource('trees-source').setData(treeData);
+    return lngLat;
+}
+
+function deleteTreesAtPoint(point) {
+    const features = map.queryRenderedFeatures(point, { layers: ['trees-layer'] });
+    if (!features.length) return;
+
+    const deletedTreeIds = features.map(f => f.properties.id);
+
+    const initialFeatureCount = treeData.features.length;
+    treeData.features = treeData.features.filter(f => !deletedTreeIds.includes(f.properties.id));
+
+    // Only update the source if something was actually deleted
+    if (treeData.features.length < initialFeatureCount) {
+        map.getSource('trees-source').setData(treeData);
+    }
+}
+
+map.on('click', (e) => {
+    // This listener handles single-click actions for tree modes
+    if (currentTreeMode === 'single') {
+        placeTree(e.lngLat);
+        // The mode is no longer disabled after a single click.
+    } else if (currentTreeMode === 'delete') {
+        deleteTreesAtPoint(e.point);
+    }
+
+    // Prevent click from propagating to other layers when in a tree mode
+    if (currentTreeMode) {
+        e.preventDefault();
+    }
+});
+
+// --- Multi-Tree and Drag-to-Delete Logic ---
+let isDragging = false;
+let lastTreePosition = null;
+
+function throttle(func, limit) {
+    let inThrottle;
+    return function() {
+        const args = arguments;
+        const context = this;
+        if (!inThrottle) {
+            func.apply(context, args);
+            inThrottle = true;
+            setTimeout(() => inThrottle = false, limit);
+        }
+    }
+}
+
+map.on('mousedown', (e) => {
+    if (currentTreeMode === 'multi') {
+        isDragging = true;
+        lastTreePosition = placeTree(e.lngLat);
+    } else if (currentTreeMode === 'delete') {
+        isDragging = true;
+        // Also delete on mousedown in case it's a single click not a drag
+        deleteTreesAtPoint(e.point);
+    }
+});
+
+map.on('mousemove', throttle((e) => {
+    if (!isDragging) return;
+
+    if (currentTreeMode === 'multi') {
+        const distance = turf.distance(
+            turf.point([lastTreePosition.lng, lastTreePosition.lat]),
+            turf.point([e.lngLat.lng, e.lngLat.lat]),
+            { units: 'meters' }
+        );
+        const minDistance = document.getElementById('tree-distance').value;
+        if (distance > minDistance) {
+            lastTreePosition = placeTree(e.lngLat);
+        }
+    } else if (currentTreeMode === 'delete') {
+        deleteTreesAtPoint(e.point);
+    }
+}, 100)); // Throttle to 100ms
+
+map.on('mouseup', () => {
+    if (isDragging) {
+        isDragging = false;
+        lastTreePosition = null;
+    }
 });

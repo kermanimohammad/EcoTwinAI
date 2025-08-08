@@ -15,6 +15,17 @@
         <button id="load-geojson">Load GeoJSON</button>
         <button id="save-geojson">Save GeoJSON</button>
         <button id="reset">Reset</button>
+        <hr>
+        <div id="tree-creator-menu">
+            <h4>Tree Creator</h4>
+            <button id="tree-mode-single" class="tree-tool-btn">Add Single</button>
+            <button id="tree-mode-multi" class="tree-tool-btn">Add Multiple</button>
+            <button id="tree-mode-delete" class="tree-tool-btn">Delete</button>
+            <div class="tree-tool-option">
+                <label for="tree-distance">Distance (m):</label>
+                <input type="number" id="tree-distance" value="10" min="1" style="width: 50px;">
+            </div>
+        </div>
     </div>
     <input type="file" id="file-input" accept=".geojson" style="display: none;">
     <script src="script.js"></script>

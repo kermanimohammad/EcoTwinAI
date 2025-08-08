@@ -40,6 +40,31 @@ body {
     box-sizing: border-box;
 }
 
+#popup-content {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
 #popup-content button {
     margin-top: 10px;
+}
+
+#tree-creator-menu h4 {
+    margin-top: 0;
+    margin-bottom: 5px;
+}
+
+.tree-tool-btn {
+    margin-bottom: 5px;
+    width: 100%;
+}
+
+.tree-tool-btn.active {
+    background-color: #3386c0;
+    color: white;
+    border-color: #3386c0;
+}
+
+.tree-tool-option {
+    margin-top: 5px;
 }
