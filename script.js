@@ -227,11 +227,13 @@ function setTreeMode(mode) {
         }
     });
 
-    // Change cursor based on mode
+    // Change cursor and map panning based on mode
     if (currentTreeMode) {
         map.getCanvas().style.cursor = 'crosshair';
+        map.dragPan.disable();
     } else {
         map.getCanvas().style.cursor = '';
+        map.dragPan.enable();
     }
 }
 
@@ -293,7 +295,7 @@ map.on('click', (e) => {
     // This listener handles single-click actions for tree modes
     if (currentTreeMode === 'single') {
         placeTree(e.lngLat);
-        setTreeMode(null); // Disable single-add mode after one click
+        // The mode is no longer disabled after a single click.
     } else if (currentTreeMode === 'delete') {
         deleteTreesAtPoint(e.point);
     }
