@@ -109,20 +109,23 @@ map.on('click', 'geojson-layer', (e) => {
 
     const properties = feature.properties;
 
-    let html = `
-        <div><strong>Building Properties</strong></div>
-        <div id="popup-content">
-            <table id="properties-table">
-    `;
+    const popupContent = document.createElement('div');
+
+    let tableHTML = '<table id="properties-table">';
     for (const key in properties) {
         const isReadOnly = key === 'ID';
-        html += `<tr>
-                    <td><input type="text" class="key-input" value="${key}" ${isReadOnly ? 'readonly' : ''}></td>
-                    <td><input type="text" class="value-input" value="${properties[key]}" ${isReadOnly ? 'readonly' : ''}></td>
-                 </tr>`;
+        tableHTML += `<tr>
+                        <td><input type="text" class="key-input" value="${key}" ${isReadOnly ? 'readonly' : ''}></td>
+                        <td><input type="text" class="value-input" value="${properties[key]}" ${isReadOnly ? 'readonly' : ''}></td>
+                        <td>${!isReadOnly ? '<button class="remove-btn">X</button>' : ''}</td>
+                     </tr>`;
     }
-    html += `
-            </table>
+    tableHTML += '</table>';
+
+    popupContent.innerHTML = `
+        <div><strong>Building Properties</strong></div>
+        <div id="popup-content">
+            ${tableHTML}
             <button id="add-row">Add Row</button>
             <button id="save-properties">Save</button>
         </div>
@@ -130,48 +133,56 @@ map.on('click', 'geojson-layer', (e) => {
 
     const popup = new mapboxgl.Popup()
         .setLngLat(e.lngLat)
-        .setHTML(html)
+        .setDOMContent(popupContent)
         .addTo(map);
 
-    popup.on('open', () => {
-        document.getElementById('add-row').addEventListener('click', () => {
-            const table = document.getElementById('properties-table');
-            const newRow = table.insertRow();
-            newRow.innerHTML = `
-                <td><input type="text" placeholder="key" class="key-input"></td>
-                <td><input type="text" placeholder="value" class="value-input"></td>
-            `;
-        });
+    const addRowBtn = popupContent.querySelector('#add-row');
+    const saveBtn = popupContent.querySelector('#save-properties');
+    const propertiesTable = popupContent.querySelector('#properties-table');
 
-        document.getElementById('save-properties').addEventListener('click', () => {
-            const table = document.getElementById('properties-table');
-            const newProperties = {};
-            for (const row of table.rows) {
-                const keyInput = row.cells[0].querySelector('.key-input');
-                const valueInput = row.cells[1].querySelector('.value-input');
-                if (keyInput && valueInput) {
-                    const key = keyInput.value;
-                    const value = valueInput.value;
-                    if (key) {
-                        newProperties[key] = isNaN(Number(value)) || value === '' ? value : Number(value);
-                    }
+    propertiesTable.addEventListener('click', (event) => {
+        if (event.target.classList.contains('remove-btn')) {
+            const row = event.target.closest('tr');
+            row.remove();
+        }
+    });
+
+    addRowBtn.addEventListener('click', () => {
+        const newRow = propertiesTable.insertRow();
+        newRow.innerHTML = `
+            <td><input type="text" placeholder="key" class="key-input"></td>
+            <td><input type="text" placeholder="value" class="value-input"></td>
+            <td><button class="remove-btn">X</button></td>
+        `;
+    });
+
+    saveBtn.addEventListener('click', () => {
+        const newProperties = {};
+        for (const row of propertiesTable.rows) {
+            const keyInput = row.cells[0].querySelector('.key-input');
+            const valueInput = row.cells[1].querySelector('.value-input');
+            if (keyInput && valueInput) {
+                const key = keyInput.value;
+                const value = valueInput.value;
+                if (key) {
+                    newProperties[key] = isNaN(Number(value)) || value === '' ? value : Number(value);
                 }
             }
+        }
 
-            const source = map.getSource('geojson-data');
-            const data = JSON.parse(JSON.stringify(source._data));
+        const source = map.getSource('geojson-data');
+        const data = JSON.parse(JSON.stringify(source._data));
 
-            const featureToUpdate = data.features.find(f => f.properties.ID === selectedFeatureId);
+        const featureToUpdate = data.features.find(f => f.properties.ID === selectedFeatureId);
 
-            if (featureToUpdate) {
-                featureToUpdate.properties = newProperties;
-                source.setData(data);
-            } else {
-                alert("Could not find the feature to update. This should not happen if features have a unique 'ID' property.");
-            }
+        if (featureToUpdate) {
+            featureToUpdate.properties = newProperties;
+            source.setData(data);
+        } else {
+            alert("Could not find the feature to update. This should not happen if features have a unique 'ID' property.");
+        }
 
-            popup.remove();
-        });
+        popup.remove();
     });
 });
 
