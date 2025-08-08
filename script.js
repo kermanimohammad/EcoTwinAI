@@ -1,6 +1,6 @@
 // IMPORTANT: You need to replace 'YOUR_MAPBOX_ACCESS_TOKEN' with your own Mapbox access token.
 // You can get a token from https://account.mapbox.com/
-mapboxgl.accessToken = 'pk.eyJ1Ijoia2VybWFuaSIsImEiOiJjajF3a2p5bWQwMDAwMnFwbWFpcjQzZW52In0.aFYLXgdRHVofYKKd6JlFdw';
+mapboxgl.accessToken = 'YOUR_MAPBOX_ACCESS_TOKEN';
 
 const map = new mapboxgl.Map({
     container: 'map', // container ID
@@ -90,15 +90,27 @@ document.getElementById('save-geojson').addEventListener('click', () => {
 });
 
 document.getElementById('reset').addEventListener('click', () => {
+    // Clear building data
     if (map.getLayer('geojson-layer')) {
         map.removeLayer('geojson-layer');
     }
     if (map.getSource('geojson-data')) {
-        map.removeSource('geojson-data');
+        map.getSource('geojson-data').setData({ type: 'FeatureCollection', features: [] });
     }
 
+    // Clear tree data
+    if (map.getSource('trees-source')) {
+        treeData.features = [];
+        map.getSource('trees-source').setData(treeData);
+        treeIdCounter = 0;
+    }
+
+    // Reset file input
     const fileInput = document.getElementById('file-input');
     fileInput.value = '';
+
+    // Deactivate any active tool
+    setTreeMode(null);
 });
 
 let selectedFeatureId = null;
@@ -247,20 +259,50 @@ map.on('load', () => {
         data: treeData
     });
 
-    map.addLayer({
-        id: 'trees-layer',
-        type: 'circle',
-        source: 'trees-source',
-        paint: {
-            'circle-radius': 8,
-            'circle-color': '#008000',
-            'circle-stroke-width': 1,
-            'circle-stroke-color': '#004d00'
+    const modelUrl = 'https://raw.githubusercontent.com/kermanimohammad/EcoTwinAI/main/Models/Tree.gltf';
+
+    map.addModel('tree-model', modelUrl, (error) => {
+        if (error) {
+            console.error('Failed to load model:', error);
+            alert('Failed to load 3D tree model. Falling back to 2D circles. Check console for details.');
+            // Fallback to circle layer if model loading fails
+            map.addLayer({
+                id: 'trees-layer',
+                type: 'circle',
+                source: 'trees-source',
+                paint: { 'circle-radius': 5, 'circle-color': '#008000' }
+            });
+            return;
         }
+
+        map.addLayer({
+            id: 'trees-layer',
+            type: 'model',
+            source: 'trees-source',
+            layout: {
+                'model-id': 'tree-model'
+            },
+            paint: {
+                'model-scale': ['get', 'scale']
+            }
+        });
     });
 });
 
 function placeTree(lngLat) {
+    const minHeight = document.getElementById('tree-min-height').value;
+    const maxHeight = document.getElementById('tree-max-height').value;
+
+    // Ensure min is less than max
+    const min = Math.min(Number(minHeight), Number(maxHeight));
+    const max = Math.max(Number(minHeight), Number(maxHeight));
+
+    const randomHeight = Math.random() * (max - min) + min;
+
+    // Assuming the user's model has a base height of 1 meter.
+    // The scale will be equivalent to the desired height in meters.
+    const modelScale = randomHeight;
+
     const newTree = {
         type: 'Feature',
         geometry: {
@@ -268,7 +310,8 @@ function placeTree(lngLat) {
             coordinates: [lngLat.lng, lngLat.lat]
         },
         properties: {
-            id: `tree-${treeIdCounter++}`
+            id: `tree-${treeIdCounter++}`,
+            scale: modelScale
         }
     };
     treeData.features.push(newTree);
