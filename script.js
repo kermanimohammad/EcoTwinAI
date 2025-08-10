@@ -3,14 +3,62 @@
 mapboxgl.accessToken = 'YOUR_MAPBOX_ACCESS_TOKEN';
 
 const map = new mapboxgl.Map({
-    container: 'map', // container ID
-    style: 'mapbox://styles/mapbox/streets-v12', // style URL
-    center: [-74.5, 40], // starting position [lng, lat]
-    zoom: 9 // starting zoom
+    container: 'map',
+    style: 'mapbox://styles/mapbox/standard',
+    center: [-74.5, 40],
+    zoom: 9,
+    pitch: 60,
+    antialias: true,
+    config: {
+        basemap: {
+            show3dObjects: false
+        }
+    }
 });
 
-// Add zoom and rotation controls to the map.
 map.addControl(new mapboxgl.NavigationControl());
+
+// --- Data Stores ---
+let buildingData = { type: 'FeatureCollection', features: [] };
+let treeTrunkData = { type: 'FeatureCollection', features: [] };
+let treeCanopyData = { type: 'FeatureCollection', features: [] };
+let treeIdCounter = 0;
+
+// --- Data Handling ---
+
+function addGeoJsonToMap(data) {
+    const center = turf.center(data).geometry.coordinates;
+    map.flyTo({ center, zoom: 16 });
+
+    // Clear existing data
+    buildingData.features = [];
+    treeTrunkData.features = [];
+    treeCanopyData.features = [];
+
+    // Separate features into buildings and trees
+    // This logic now needs to handle both old Point-based trees and new Polygon-based trees
+    for (const feature of data.features) {
+        if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') {
+            if (feature.properties.isCanopy) {
+                treeCanopyData.features.push(feature);
+            } else if (feature.properties.isTrunk) {
+                treeTrunkData.features.push(feature);
+            } else {
+                buildingData.features.push(feature);
+            }
+        } else if (feature.geometry.type === 'Point') {
+            // Legacy support for old tree format (convert to new format)
+            placeTree(feature.geometry.coordinates, feature.properties.height);
+        }
+    }
+
+    // Update the sources
+    map.getSource('geojson-data').setData(buildingData);
+    map.getSource('tree-trunks-source').setData(treeTrunkData);
+    map.getSource('tree-canopies-source').setData(treeCanopyData);
+}
+
+// --- UI Event Listeners ---
 
 document.getElementById('load-geojson').addEventListener('click', () => {
     document.getElementById('file-input').click();
@@ -18,10 +66,7 @@ document.getElementById('load-geojson').addEventListener('click', () => {
 
 document.getElementById('file-input').addEventListener('change', (event) => {
     const file = event.target.files[0];
-    if (!file) {
-        return;
-    }
-
+    if (!file) return;
     const reader = new FileReader();
     reader.onload = (e) => {
         try {
@@ -34,54 +79,22 @@ document.getElementById('file-input').addEventListener('change', (event) => {
     reader.readAsText(file);
 });
 
-function addGeoJsonToMap(data) {
-    // Center the map on the new data
-    const center = turf.center(data).geometry.coordinates;
-    map.flyTo({ center, zoom: 15 });
-
-    if (map.getSource('geojson-data')) {
-        map.getSource('geojson-data').setData(data);
-    } else {
-        map.addSource('geojson-data', {
-            type: 'geojson',
-            data: data,
-            promoteId: 'ID' // Use the 'ID' property from the GeoJSON as the feature id
-        });
-    }
-
-    if (map.getLayer('geojson-layer')) {
-        map.removeLayer('geojson-layer');
-    }
-
-    map.addLayer({
-        'id': 'geojson-layer',
-        'type': 'fill-extrusion',
-        'source': 'geojson-data',
-        'paint': {
-            'fill-extrusion-color': [
-                'interpolate',
-                ['linear'],
-                ['get', 'TotalEnergy'],
-                50, 'green',
-                100, 'yellow',
-                150, 'red'
-            ],
-            'fill-extrusion-height': ['get', 'Height'],
-            'fill-extrusion-opacity': 0.8,
-            'fill-extrusion-base': 0
-        }
-    });
-}
-
 document.getElementById('save-geojson').addEventListener('click', () => {
-    const source = map.getSource('geojson-data');
-    if (source) {
-        const data = JSON.stringify(source._data, null, 2);
-        const blob = new Blob([data], {type: 'application/json'});
+    const buildings = buildingData.features;
+    const trunks = treeTrunkData.features;
+    const canopies = treeCanopyData.features;
+
+    if (buildings.length || trunks.length) {
+        const combinedData = {
+            type: 'FeatureCollection',
+            features: [...buildings, ...trunks, ...canopies]
+        };
+        const dataStr = JSON.stringify(combinedData, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'data.geojson';
+        a.download = 'data-with-trees.geojson';
         a.click();
         URL.revokeObjectURL(url);
     } else {
@@ -90,37 +103,27 @@ document.getElementById('save-geojson').addEventListener('click', () => {
 });
 
 document.getElementById('reset').addEventListener('click', () => {
-    // Clear building data
-    if (map.getLayer('geojson-layer')) {
-        map.removeLayer('geojson-layer');
-    }
-    if (map.getSource('geojson-data')) {
-        map.getSource('geojson-data').setData({ type: 'FeatureCollection', features: [] });
-    }
-
-    // Clear tree data
-    if (map.getSource('trees-source')) {
-        treeData.features = [];
-        map.getSource('trees-source').setData(treeData);
-        treeIdCounter = 0;
-    }
-
-    // Reset file input
-    const fileInput = document.getElementById('file-input');
-    fileInput.value = '';
-
-    // Deactivate any active tool
+    buildingData = { type: 'FeatureCollection', features: [] };
+    treeTrunkData = { type: 'FeatureCollection', features: [] };
+    treeCanopyData = { type: 'FeatureCollection', features: [] };
+    map.getSource('geojson-data').setData(buildingData);
+    map.getSource('tree-trunks-source').setData(treeTrunkData);
+    map.getSource('tree-canopies-source').setData(treeCanopyData);
+    treeIdCounter = 0;
+    document.getElementById('file-input').value = '';
     setTreeMode(null);
 });
+
+// --- Building Pop-up Logic ---
 
 let selectedFeatureId = null;
 
 map.on('click', 'geojson-layer', (e) => {
+    if (currentTreeMode) return;
     const feature = e.features[0];
-    selectedFeatureId = feature.id; // This will be the 'ID' property from the GeoJSON
+    selectedFeatureId = feature.properties.ID;
 
     const properties = feature.properties;
-
     const popupContent = document.createElement('div');
 
     let tableHTML = '<table id="properties-table">';
@@ -129,7 +132,7 @@ map.on('click', 'geojson-layer', (e) => {
         tableHTML += `<tr>
                         <td><input type="text" class="key-input" value="${key}" ${isReadOnly ? 'readonly' : ''}></td>
                         <td><input type="text" class="value-input" value="${properties[key]}" ${isReadOnly ? 'readonly' : ''}></td>
-                        <td>${!isReadOnly ? '<button class="remove-btn">X</button>' : ''}</td>
+                        <td>${!isReadOnly ? `<button class="remove-btn" data-key="${key}">X</button>` : ''}</td>
                      </tr>`;
     }
     tableHTML += '</table>';
@@ -143,23 +146,16 @@ map.on('click', 'geojson-layer', (e) => {
         </div>
     `;
 
-    const popup = new mapboxgl.Popup()
-        .setLngLat(e.lngLat)
-        .setDOMContent(popupContent)
-        .addTo(map);
+    const popup = new mapboxgl.Popup().setLngLat(e.lngLat).setDOMContent(popupContent).addTo(map);
 
-    const addRowBtn = popupContent.querySelector('#add-row');
-    const saveBtn = popupContent.querySelector('#save-properties');
     const propertiesTable = popupContent.querySelector('#properties-table');
-
     propertiesTable.addEventListener('click', (event) => {
         if (event.target.classList.contains('remove-btn')) {
-            const row = event.target.closest('tr');
-            row.remove();
+            event.target.closest('tr').remove();
         }
     });
 
-    addRowBtn.addEventListener('click', () => {
+    popupContent.querySelector('#add-row').addEventListener('click', () => {
         const newRow = propertiesTable.insertRow();
         newRow.innerHTML = `
             <td><input type="text" placeholder="key" class="key-input"></td>
@@ -168,7 +164,7 @@ map.on('click', 'geojson-layer', (e) => {
         `;
     });
 
-    saveBtn.addEventListener('click', () => {
+    popupContent.querySelector('#save-properties').addEventListener('click', () => {
         const newProperties = {};
         for (const row of propertiesTable.rows) {
             const keyInput = row.cells[0].querySelector('.key-input');
@@ -176,180 +172,188 @@ map.on('click', 'geojson-layer', (e) => {
             if (keyInput && valueInput) {
                 const key = keyInput.value;
                 const value = valueInput.value;
-                if (key) {
-                    newProperties[key] = isNaN(Number(value)) || value === '' ? value : Number(value);
-                }
+                if (key) newProperties[key] = isNaN(Number(value)) || value === '' ? value : Number(value);
             }
         }
-
-        const source = map.getSource('geojson-data');
-        const data = JSON.parse(JSON.stringify(source._data));
-
-        const featureToUpdate = data.features.find(f => f.properties.ID === selectedFeatureId);
-
+        const featureToUpdate = buildingData.features.find(f => f.properties.ID === selectedFeatureId);
         if (featureToUpdate) {
             featureToUpdate.properties = newProperties;
-            source.setData(data);
+            map.getSource('geojson-data').setData(buildingData);
         } else {
-            alert("Could not find the feature to update. This should not happen if features have a unique 'ID' property.");
+            alert("Could not find the feature to update.");
         }
-
         popup.remove();
     });
 });
 
-// Change the cursor to a pointer when the mouse is over the states layer.
-map.on('mouseenter', 'geojson-layer', () => {
-    map.getCanvas().style.cursor = 'pointer';
-});
-
-// Change it back to a pointer when it leaves.
-map.on('mouseleave', 'geojson-layer', () => {
-    map.getCanvas().style.cursor = '';
-});
+map.on('mouseenter', 'geojson-layer', () => { if (!currentTreeMode) map.getCanvas().style.cursor = 'pointer'; });
+map.on('mouseleave', 'geojson-layer', () => { if (!currentTreeMode) map.getCanvas().style.cursor = ''; });
 
 // --- Tree Creator ---
 
-let currentTreeMode = null; // 'single', 'multi', 'delete'
-let treeData = {
-    type: 'FeatureCollection',
-    features: []
-};
-let treeIdCounter = 0;
+let currentTreeMode = null;
 
-const treeModeSingleBtn = document.getElementById('tree-mode-single');
 const treeModeMultiBtn = document.getElementById('tree-mode-multi');
 const treeModeDeleteBtn = document.getElementById('tree-mode-delete');
-const treeCreatorBtns = [treeModeSingleBtn, treeModeMultiBtn, treeModeDeleteBtn];
+const treeCreatorBtns = [treeModeMultiBtn, treeModeDeleteBtn];
 
 function setTreeMode(mode) {
-    // If the same mode is clicked again, disable it.
     if (currentTreeMode === mode) {
         currentTreeMode = null;
     } else {
         currentTreeMode = mode;
     }
 
-    // Update button styles
     treeCreatorBtns.forEach(btn => {
-        if (btn.id === `tree-mode-${currentTreeMode}`) {
+        const btnMode = btn.id.split('-')[2];
+        if (btnMode === currentTreeMode) {
             btn.classList.add('active');
         } else {
             btn.classList.remove('active');
         }
     });
-
-    // Change cursor and map panning based on mode
-    if (currentTreeMode) {
-        map.getCanvas().style.cursor = 'crosshair';
-        map.dragPan.disable();
-    } else {
-        map.getCanvas().style.cursor = '';
-        map.dragPan.enable();
-    }
+    map.getCanvas().style.cursor = currentTreeMode ? 'crosshair' : '';
 }
 
-treeModeSingleBtn.addEventListener('click', () => setTreeMode('single'));
-treeModeMultiBtn.addEventListener('click', () => setTreeMode('multi'));
-treeModeDeleteBtn.addEventListener('click', () => setTreeMode('delete'));
-
-map.on('load', () => {
-    map.addSource('trees-source', {
-        type: 'geojson',
-        data: treeData
-    });
-
-    const modelUrl = 'https://raw.githubusercontent.com/kermanimohammad/EcoTwinAI/main/Models/Tree.gltf';
-
-    map.addModel('tree-model', modelUrl, (error) => {
-        if (error) {
-            console.error('Failed to load model:', error);
-            alert('Failed to load 3D tree model. Falling back to 2D circles. Check console for details.');
-            // Fallback to circle layer if model loading fails
-            map.addLayer({
-                id: 'trees-layer',
-                type: 'circle',
-                source: 'trees-source',
-                paint: { 'circle-radius': 5, 'circle-color': '#008000' }
-            });
-            return;
-        }
-
-        map.addLayer({
-            id: 'trees-layer',
-            type: 'model',
-            source: 'trees-source',
-            layout: {
-                'model-id': 'tree-model'
-            },
-            paint: {
-                'model-scale': ['get', 'scale']
-            }
-        });
-    });
+treeCreatorBtns.forEach(btn => {
+    btn.addEventListener('click', () => setTreeMode(btn.id.split('-')[2]));
 });
 
-function placeTree(lngLat) {
-    const minHeight = document.getElementById('tree-min-height').value;
-    const maxHeight = document.getElementById('tree-max-height').value;
+// --- Map Layers Setup ---
 
-    // Ensure min is less than max
-    const min = Math.min(Number(minHeight), Number(maxHeight));
-    const max = Math.max(Number(minHeight), Number(maxHeight));
+map.on('load', () => {
+    // Add source for buildings
+    map.addSource('geojson-data', {
+        type: 'geojson',
+        data: buildingData
+    });
 
-    const randomHeight = Math.random() * (max - min) + min;
+    // Add sources for tree parts
+    map.addSource('tree-trunks-source', {
+        type: 'geojson',
+        data: treeTrunkData
+    });
+    map.addSource('tree-canopies-source', {
+        type: 'geojson',
+        data: treeCanopyData
+    });
 
-    // Assuming the user's model has a base height of 1 meter.
-    // The scale will be equivalent to the desired height in meters.
-    const modelScale = randomHeight;
+    // Add layer for buildings
+    map.addLayer({
+        'id': 'geojson-layer',
+        'type': 'fill-extrusion',
+        'source': 'geojson-data',
+        'paint': {
+            'fill-extrusion-color': [
+                'interpolate', ['linear'], ['get', 'TotalEnergy'],
+                50, 'green', 100, 'yellow', 150, 'red'
+            ],
+            'fill-extrusion-height': ['*', ['get', 'Height'], 0.3048],
+            'fill-extrusion-opacity': 1.0,
+            'fill-extrusion-base': 0
+        }
+    });
 
-    const newTree = {
-        type: 'Feature',
-        geometry: {
-            type: 'Point',
-            coordinates: [lngLat.lng, lngLat.lat]
-        },
+    // Add layer for tree trunks
+    map.addLayer({
+        'id': 'tree-trunks-layer',
+        'type': 'fill-extrusion',
+        'source': 'tree-trunks-source',
+        'paint': {
+            'fill-extrusion-color': '#8B4513', // Brown
+            'fill-extrusion-height': ['get', 'height'],
+            'fill-extrusion-base': ['get', 'base']
+        }
+    });
+
+    // Add layer for tree canopies
+    map.addLayer({
+        'id': 'tree-canopies-layer',
+        'type': 'fill-extrusion',
+        'source': 'tree-canopies-source',
+        'paint': {
+            'fill-extrusion-color': '#008000', // Green
+            'fill-extrusion-height': ['+', ['get', 'base'], ['get', 'height']],
+            'fill-extrusion-base': ['get', 'base']
+        }
+    });
+
+    // Set up lighting and initial sun position
+    map.setConfigProperty('basemap', 'lightPreset', 'custom');
+    updateSunPosition();
+});
+
+map.on('mouseenter', 'tree-trunks-layer', () => { if (!currentTreeMode) map.getCanvas().style.cursor = 'pointer'; });
+map.on('mouseleave', 'tree-trunks-layer', () => { if (!currentTreeMode) map.getCanvas().style.cursor = ''; });
+map.on('mouseenter', 'tree-canopies-layer', () => { if (!currentTreeMode) map.getCanvas().style.cursor = 'pointer'; });
+map.on('mouseleave', 'tree-canopies-layer', () => { if (!currentTreeMode) map.getCanvas().style.cursor = ''; });
+
+
+function placeTree(lngLat, legacyHeight) {
+    const totalHeight = legacyHeight || (() => {
+        const min = Number(document.getElementById('tree-min-height').value);
+        const max = Number(document.getElementById('tree-max-height').value);
+        return Math.random() * (max - min) + min;
+    })();
+
+    const trunkHeight = totalHeight * 0.4;
+    const canopyHeight = totalHeight * 0.6;
+    const trunkRadius = 0.4; // in meters
+    const canopyRadius = 2.5; // in meters
+    const treeId = `tree-${treeIdCounter++}`;
+
+    const pointCoords = Array.isArray(lngLat) ? lngLat : [lngLat.lng, lngLat.lat];
+    const point = turf.point(pointCoords);
+
+    // Create Trunk
+    const trunkBuffer = turf.buffer(point, trunkRadius, { units: 'meters' });
+    const trunkFeature = {
+        ...trunkBuffer,
         properties: {
-            id: `tree-${treeIdCounter++}`,
-            scale: modelScale
+            id: treeId,
+            isTrunk: true,
+            height: trunkHeight,
+            base: 0
         }
     };
-    treeData.features.push(newTree);
-    map.getSource('trees-source').setData(treeData);
-    return lngLat;
+    treeTrunkData.features.push(trunkFeature);
+
+    // Create Canopy
+    const canopyBuffer = turf.buffer(point, canopyRadius, { units: 'meters' });
+    const canopyFeature = {
+        ...canopyBuffer,
+        properties: {
+            id: treeId,
+            isCanopy: true,
+            height: canopyHeight,
+            base: trunkHeight // Place canopy on top of the trunk
+        }
+    };
+    treeCanopyData.features.push(canopyFeature);
+
+    // Update both sources
+    map.getSource('tree-trunks-source').setData(treeTrunkData);
+    map.getSource('tree-canopies-source').setData(treeCanopyData);
 }
 
 function deleteTreesAtPoint(point) {
-    const features = map.queryRenderedFeatures(point, { layers: ['trees-layer'] });
+    const features = map.queryRenderedFeatures(point, { layers: ['tree-trunks-layer', 'tree-canopies-layer'] });
     if (!features.length) return;
 
-    const deletedTreeIds = features.map(f => f.properties.id);
+    const idToDelete = features[0].properties.id;
+    treeTrunkData.features = treeTrunkData.features.filter(f => f.properties.id !== idToDelete);
+    treeCanopyData.features = treeCanopyData.features.filter(f => f.properties.id !== idToDelete);
 
-    const initialFeatureCount = treeData.features.length;
-    treeData.features = treeData.features.filter(f => !deletedTreeIds.includes(f.properties.id));
-
-    // Only update the source if something was actually deleted
-    if (treeData.features.length < initialFeatureCount) {
-        map.getSource('trees-source').setData(treeData);
-    }
+    map.getSource('tree-trunks-source').setData(treeTrunkData);
+    map.getSource('tree-canopies-source').setData(treeCanopyData);
 }
 
 map.on('click', (e) => {
-    // This listener handles single-click actions for tree modes
-    if (currentTreeMode === 'single') {
-        placeTree(e.lngLat);
-        // The mode is no longer disabled after a single click.
-    } else if (currentTreeMode === 'delete') {
+    if (currentTreeMode === 'delete') {
         deleteTreesAtPoint(e.point);
-    }
-
-    // Prevent click from propagating to other layers when in a tree mode
-    if (currentTreeMode) {
-        e.preventDefault();
     }
 });
 
-// --- Multi-Tree and Drag-to-Delete Logic ---
 let isDragging = false;
 let lastTreePosition = null;
 
@@ -367,37 +371,132 @@ function throttle(func, limit) {
 }
 
 map.on('mousedown', (e) => {
+    if (e.originalEvent.button !== 0) return;
+    if (currentTreeMode) e.preventDefault();
+
     if (currentTreeMode === 'multi') {
         isDragging = true;
-        lastTreePosition = placeTree(e.lngLat);
+        map.dragPan.disable();
+        placeTree(e.lngLat);
+        lastTreePosition = e.lngLat;
     } else if (currentTreeMode === 'delete') {
         isDragging = true;
-        // Also delete on mousedown in case it's a single click not a drag
+        map.dragPan.disable();
         deleteTreesAtPoint(e.point);
     }
 });
 
 map.on('mousemove', throttle((e) => {
     if (!isDragging) return;
-
     if (currentTreeMode === 'multi') {
         const distance = turf.distance(
-            turf.point([lastTreePosition.lng, lastTreePosition.lat]),
-            turf.point([e.lngLat.lng, e.lngLat.lat]),
+            [lastTreePosition.lng, lastTreePosition.lat],
+            [e.lngLat.lng, e.lngLat.lat],
             { units: 'meters' }
         );
         const minDistance = document.getElementById('tree-distance').value;
         if (distance > minDistance) {
-            lastTreePosition = placeTree(e.lngLat);
+            placeTree(e.lngLat);
+            lastTreePosition = e.lngLat;
         }
     } else if (currentTreeMode === 'delete') {
         deleteTreesAtPoint(e.point);
     }
-}, 100)); // Throttle to 100ms
+}, 100));
 
 map.on('mouseup', () => {
     if (isDragging) {
         isDragging = false;
         lastTreePosition = null;
+        if (!currentTreeMode) {
+            map.dragPan.enable();
+        }
+    }
+    if (currentTreeMode !== 'multi' && currentTreeMode !== 'delete') {
+        map.dragPan.enable();
     }
 });
+
+// --- Sun Simulation ---
+
+const sunSimUIPairs = [
+    { slider: 'sun-month-slider', input: 'sun-month-input' },
+    { slider: 'sun-day-slider', input: 'sun-day-input' },
+    { slider: 'sun-hour-slider', input: 'sun-hour-input' },
+    { slider: 'sun-minute-slider', input: 'sun-minute-input' }
+];
+
+function syncInputs(sliderEl, inputEl) {
+    sliderEl.addEventListener('input', () => {
+        inputEl.value = sliderEl.value;
+        updateSunPosition();
+    });
+    inputEl.addEventListener('input', () => {
+        let value = parseInt(inputEl.value);
+        const min = parseInt(inputEl.min);
+        const max = parseInt(inputEl.max);
+        if (isNaN(value)) return;
+        if (value < min) value = min;
+        if (value > max) value = max;
+        inputEl.value = value;
+        sliderEl.value = value;
+        updateSunPosition();
+    });
+}
+
+sunSimUIPairs.forEach(pair => {
+    const slider = document.getElementById(pair.slider);
+    const input = document.getElementById(pair.input);
+    syncInputs(slider, input);
+});
+
+function updateSunPosition() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = parseInt(document.getElementById('sun-month-slider').value) - 1;
+    const day = parseInt(document.getElementById('sun-day-slider').value);
+    const hour = parseInt(document.getElementById('sun-hour-slider').value);
+    const minute = parseInt(document.getElementById('sun-minute-slider').value);
+
+    // Create a local date object to match the user's perception of time
+    const date = new Date(year, month, day, hour, minute);
+    const lat = 40.7128;
+    const lon = -74.0060;
+
+    if (isNaN(date.getTime())) {
+        console.error("Invalid date values for sun calculation.");
+        return;
+    }
+
+    const sunPosition = SunCalc.getPosition(date, lat, lon);
+
+    // Calculate sun properties for Mapbox's modern lighting system
+    const sunAzimuth = (sunPosition.azimuth * 180 / Math.PI) + 180;
+    const sunPolarAngle = 90 - (sunPosition.altitude * 180 / Math.PI);
+
+    // When the sun is below the horizon, altitude is negative.
+    // The light should have zero intensity and a valid polar angle.
+    const sunIntensity = Math.max(0, Math.sin(sunPosition.altitude));
+
+    map.setLights([
+        {
+            "id": "ambient_light",
+            "type": "ambient",
+            "properties": {
+                "color": "white",
+                "intensity": 0.5 * sunIntensity // Dim ambient light at night
+            }
+        },
+        {
+            "id": "directional_light",
+            "type": "directional",
+            "properties": {
+                "color": "white",
+                "intensity": 0.6 * sunIntensity,
+                "direction": [sunAzimuth, Math.min(sunPolarAngle, 90)],
+                "cast-shadows": true,
+                "shadow-intensity": 0.7
+            }
+        }
+    ]);
+}

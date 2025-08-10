@@ -65,7 +65,7 @@ body {
     border-color: #3386c0;
 }
 
-.tree-tool-option {
+.tree-tool-option, .sun-tool-option {
     margin-top: 5px;
     display: flex;
     justify-content: space-between;
@@ -74,4 +74,18 @@ body {
 
 #tree-creator-menu input[type="number"] {
     width: 60px;
+}
+
+.sun-tool-option label {
+    flex-basis: 50px; /* Give labels a fixed width */
+    flex-shrink: 0;
+}
+
+.sun-slider {
+    flex-grow: 1;
+    margin: 0 10px;
+}
+
+.sun-input {
+    width: 50px;
 }
