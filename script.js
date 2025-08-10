@@ -1,6 +1,4 @@
-// IMPORTANT: You need to replace 'YOUR_MAPBOX_ACCESS_TOKEN' with your own Mapbox access token.
-// You can get a token from https://account.mapbox.com/
-mapboxgl.accessToken = 'YOUR_MAPBOX_ACCESS_TOKEN';
+mapboxgl.accessToken = 'pk.eyJ1Ijoia2VybWFuaSIsImEiOiJjajF3a2p5bWQwMDAwMnFwbWFpcjQzZW52In0.aFYLXgdRHVofYKKd6JlFdw';
 
 const map = new mapboxgl.Map({
     container: 'map',
